@@ -1,4 +1,5 @@
 import gradio as gr
+from extension_f5_tts import ui_app
 
 
 def extension__tts_generation_webui():
@@ -6,7 +7,7 @@ def extension__tts_generation_webui():
     return {
         "package_name": "extension_f5_tts",
         "name": "F5-TTS",
-        "version": "0.0.1",
+        "version": "0.1.0",
         "requirements": "git+https://github.com/rsxdalv/extension_f5_tts@main",
         "description": "F5-TTS: A Fairytaler that Fakes Fluent and Faithful Speech with Flow Matching.",
         "extension_type": "interface",
@@ -21,9 +22,7 @@ def extension__tts_generation_webui():
 
 
 def f5_tts_ui():
-    with gr.Group(visible=False):
-        from f5_tts.gradio_app import app
-    app.render()
+    ui_app()
 
 
 if __name__ == "__main__":
