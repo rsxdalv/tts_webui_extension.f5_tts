@@ -610,7 +610,8 @@ def ui_core():
         with gr.Tab("Podcast"):
             ui_app_podcast()
         with gr.Tab("Multi-Style"):
-            ui_app_emotional()
+            gr.Markdown("Emotional is disabled due to low performance causing the entire app to crash")
+            # ui_app_emotional()
         with gr.Tab("Credits"):
             ui_app_credits()
 

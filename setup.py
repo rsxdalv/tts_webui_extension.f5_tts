@@ -4,7 +4,7 @@ import setuptools
 setuptools.setup(
 	name="extension_f5_tts",
     packages=setuptools.find_namespace_packages(),
-	version="0.1.2",
+	version="0.1.3",
 	author="rsxdalv",
 	description="F5-TTS: A Fairytaler that Fakes Fluent and Faithful Speech with Flow Matching.",
 	url="https://github.com/rsxdalv/extension_f5_tts",
