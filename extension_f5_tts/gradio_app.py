@@ -64,26 +64,36 @@ from f5_tts.model.utils_infer import (
 vocos = load_vocoder()
 
 
-# load models
-F5TTS_model_cfg = dict(dim=1024, depth=22, heads=16, ff_mult=2, text_dim=512, conv_layers=4)
-F5TTS_ema_model = load_model(
-    DiT, F5TTS_model_cfg, str(cached_path("hf://SWivid/F5-TTS/F5TTS_Base/model_1200000.safetensors"))
-)
 
-E2TTS_model_cfg = dict(dim=1024, depth=24, heads=16, ff_mult=4)
-E2TTS_ema_model = load_model(
-    UNetT, E2TTS_model_cfg, str(cached_path("hf://SWivid/E2-TTS/E2TTS_Base/model_1200000.safetensors"))
-)
+F5TTS_ema_model = None
+E2TTS_ema_model = None
 
+def get_F5TTS_model():
+    global F5TTS_ema_model
+    if F5TTS_ema_model is None:
+        F5TTS_model_cfg = dict(dim=1024, depth=22, heads=16, ff_mult=2, text_dim=512, conv_layers=4)
+        F5TTS_ema_model = load_model(
+            DiT, F5TTS_model_cfg, str(cached_path("hf://SWivid/F5-TTS/F5TTS_Base/model_1200000.safetensors"))
+        )
+    return F5TTS_ema_model
+
+def get_E2TTS_model():
+    global E2TTS_ema_model
+    if E2TTS_ema_model is None:
+        E2TTS_model_cfg = dict(dim=1024, depth=24, heads=16, ff_mult=4)
+        E2TTS_ema_model = load_model(
+            UNetT, E2TTS_model_cfg, str(cached_path("hf://SWivid/E2-TTS/E2TTS_Base/model_1200000.safetensors"))
+        )
+    return E2TTS_ema_model
 
 @gpu_decorator
 def infer(ref_audio_orig, ref_text, gen_text, model, remove_silence, cross_fade_duration=0.15, speed=1):
     ref_audio, ref_text = preprocess_ref_audio_text(ref_audio_orig, ref_text, show_info=gr.Info)
 
     if model == "F5-TTS":
-        ema_model = F5TTS_ema_model
+        ema_model = get_F5TTS_model()
     elif model == "E2-TTS":
-        ema_model = E2TTS_ema_model
+        ema_model = get_E2TTS_model()
 
     final_wave, final_sample_rate, combined_spectrogram = infer_process(
         ref_audio,
@@ -576,9 +586,9 @@ def ui_app_emotional():
             inputs=[gen_text_input_emotional, regular_name] + speech_type_names,
             outputs=generate_emotional_btn,
         )
-def ui_app():
-    with gr.Blocks() as app:
-        gr.Markdown(
+
+def ui_core():
+    gr.Markdown(
             """
     # E2/F5 TTS
 
@@ -593,14 +603,20 @@ def ui_app():
 
     **NOTE: Reference text will be automatically transcribed with Whisper if not provided. For best results, keep your reference clips short (<15s). Ensure the audio is fully uploaded before generating.**
     """
-        )
-        # gr.TabbedInterface([app_tts, app_podcast, app_emotional, app_credits], ["TTS", "Podcast", "Multi-Style", "Credits"])
-        # ui_app_tts,
-        with gr.Tabs():
+    )
+    with gr.Tabs():
+        with gr.Tab("TTS"):
             ui_app_tts()
+        with gr.Tab("Podcast"):
             ui_app_podcast()
+        with gr.Tab("Multi-Style"):
             ui_app_emotional()
+        with gr.Tab("Credits"):
             ui_app_credits()
+
+def ui_app():
+    with gr.Blocks() as app:
+        ui_core()
     return app
 
 
