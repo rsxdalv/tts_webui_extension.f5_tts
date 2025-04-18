@@ -75,19 +75,20 @@ DEFAULT_TTS_MODEL_CFG = [
     ),
 ]
 
-# load models
-vocoder = load_vocoder()
+@manage_model_state("f5_tts_vocoder")
+def load_vocoder2():
+    return load_vocoder()
 
 
 # Use a single model state namespace for all TTS models
-@manage_model_state("tts_model")
+@manage_model_state("f5_tts_model")
 def load_f5tts(model_name="F5-TTS_v1"):
     ckpt_path = str(cached_path(DEFAULT_TTS_MODEL_CFG[0]))
     F5TTS_model_cfg = json.loads(DEFAULT_TTS_MODEL_CFG[2])
     return load_model(DiT, F5TTS_model_cfg, ckpt_path)
 
 
-@manage_model_state("tts_model")
+@manage_model_state("f5_tts_model")
 def load_e2tts(model_name="E2-TTS"):
     ckpt_path = str(
         cached_path("hf://SWivid/E2-TTS/E2TTS_Base/model_1200000.safetensors")
@@ -98,7 +99,7 @@ def load_e2tts(model_name="E2-TTS"):
     return load_model(UNetT, E2TTS_model_cfg, ckpt_path)
 
 
-@manage_model_state("tts_model")
+@manage_model_state("f5_tts_model")
 def load_custom(model_name, vocab_path="", model_cfg=None):
     # model_name is the path to the model checkpoint
     ckpt_path = model_name.strip()
@@ -169,6 +170,8 @@ def infer(
         # Handle parsing errors or other exceptions
         gr.Warning(f"Error loading model: {str(e)}. Defaulting to {DEFAULT_TTS_MODEL}.")
         ema_model = load_f5tts("F5-TTS_v1")
+
+    vocoder = load_vocoder2()
 
     final_wave, final_sample_rate, combined_spectrogram = infer_process(
         ref_audio,
