@@ -6,7 +6,7 @@ def extension__tts_generation_webui():
     return {
         "package_name": "extension_f5_tts",
         "name": "F5-TTS",
-        "version": "1.1.0",
+        "version": "1.2.0",
         "requirements": "git+https://github.com/rsxdalv/extension_f5_tts@main",
         "description": "F5-TTS: A Fairytaler that Fakes Fluent and Faithful Speech with Flow Matching.",
         "extension_type": "interface",
@@ -21,7 +21,7 @@ def extension__tts_generation_webui():
 
 
 def f5_tts_ui():
-    from extension_f5_tts.gradio_app import ui_core
+    from .gradio_app import ui_core
 
     ui_core()
 

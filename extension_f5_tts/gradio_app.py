@@ -35,14 +35,26 @@ import torchaudio
 from cached_path import cached_path
 from pydub import AudioSegment
 
-from tts_webui.utils.manage_model_state import manage_model_state
+from tts_webui.decorators.decorator_add_base_filename import decorator_add_base_filename
+from tts_webui.decorators.decorator_add_date import decorator_add_date
+from tts_webui.decorators.decorator_add_model_type import decorator_add_model_type
+from tts_webui.decorators.decorator_apply_torch_seed import decorator_apply_torch_seed
+from tts_webui.decorators.decorator_log_generation import decorator_log_generation
+from tts_webui.decorators.decorator_save_metadata import decorator_save_metadata
+from tts_webui.decorators.decorator_save_wav import decorator_save_wav
+from tts_webui.decorators.gradio_dict_decorator import dictionarize
+from tts_webui.decorators.log_function_time import log_function_time
+from tts_webui.extensions_loader.decorator_extensions import (
+    decorator_extension_inner,
+    decorator_extension_outer,
+)
 from tts_webui.utils.list_dir_models import unload_model_button
-
+from tts_webui.utils.manage_model_state import manage_model_state
+from tts_webui.utils.randomize_seed import randomize_seed_ui
 
 
 from f5_tts.model import DiT, UNetT
 from f5_tts.infer.utils_infer import (
-    load_vocoder,
     load_model,
     preprocess_ref_audio_text,
     infer_process,
@@ -58,14 +70,16 @@ DEFAULT_MODEL_CONFIG = json.dumps(
 )
 
 # Default model choice JSON structure
-DEFAULT_MODEL_CHOICE_JSON = json.dumps({
-    "type": DEFAULT_TTS_MODEL,
-    "custom": {
-        "model_path": "",
-        "vocab_path": "",
-        "model_config": DEFAULT_MODEL_CONFIG
+DEFAULT_MODEL_CHOICE_JSON = json.dumps(
+    {
+        "type": DEFAULT_TTS_MODEL,
+        "custom": {
+            "model_path": "",
+            "vocab_path": "",
+            "model_config": DEFAULT_MODEL_CONFIG,
+        },
     }
-})
+)
 
 DEFAULT_TTS_MODEL_CFG = [
     "hf://SWivid/F5-TTS/F5TTS_v1_Base/model_1250000.safetensors",
@@ -75,12 +89,23 @@ DEFAULT_TTS_MODEL_CFG = [
     ),
 ]
 
+OPEN_F5_TTS_MODEL_CFG = [
+    "hf://mrfakename/OpenF5-TTS/model.pt",
+    "hf://mrfakename/OpenF5-TTS/vocab.txt",
+    json.dumps(
+        dict(dim=1024, depth=22, heads=16, ff_mult=2, text_dim=512, conv_layers=4)
+    ),
+]
+
+
 @manage_model_state("f5_tts_vocoder")
-def load_vocoder2():
-    return load_vocoder()
+def load_vocoder_local(model_name="vocoder"):
+    from f5_tts.infer.utils_infer import load_vocoder
+
+    vocoder = load_vocoder()
+    return vocoder
 
 
-# Use a single model state namespace for all TTS models
 @manage_model_state("f5_tts_model")
 def load_f5tts(model_name="F5-TTS_v1"):
     ckpt_path = str(cached_path(DEFAULT_TTS_MODEL_CFG[0]))
@@ -113,6 +138,45 @@ def load_custom(model_name, vocab_path="", model_cfg=None):
         model_cfg = json.loads(DEFAULT_TTS_MODEL_CFG[2])
     return load_model(DiT, model_cfg, ckpt_path, vocab_file=vocab_path)
 
+
+@decorator_extension_outer
+@decorator_apply_torch_seed
+@decorator_save_metadata
+@decorator_save_wav
+@decorator_add_model_type("f5_tts")
+@decorator_add_base_filename
+@decorator_add_date
+@decorator_log_generation
+@decorator_extension_inner
+@log_function_time
+def infer_decorated(
+    ref_audio_orig,
+    ref_text,
+    text,
+    model,
+    remove_silence,
+    cross_fade_duration=0.15,
+    nfe_step=32,
+    speed=1,
+    show_info=gr.Info,
+    **kwargs,
+):
+    audio, spectrogram, ref_text = infer(
+        ref_audio_orig,
+        ref_text,
+        text,
+        model,
+        remove_silence,
+        cross_fade_duration,
+        nfe_step,
+        speed,
+        show_info,
+    )
+    return {
+        "audio_out": audio,
+        "spectrogram_output": spectrogram,
+        "ref_text_input": ref_text,
+    }
 
 
 def infer(
@@ -150,6 +214,12 @@ def infer(
             ema_model = load_f5tts("F5-TTS_v1")
         elif model_type == "E2-TTS":
             ema_model = load_e2tts("E2-TTS")
+        elif model_type == "OpenF5-TTS":
+            ema_model = load_custom(
+                OPEN_F5_TTS_MODEL_CFG[0],
+                vocab_path=OPEN_F5_TTS_MODEL_CFG[1],
+                model_cfg=json.loads(OPEN_F5_TTS_MODEL_CFG[2]),
+            )
         elif model_type == "Custom":
             # Get custom model configuration from the JSON
             custom_data = model_data["custom"]
@@ -158,20 +228,28 @@ def infer(
             custom_model_config = custom_data["model_config"]
 
             if not custom_model_path:
-                gr.Warning("Custom model path is not set. Please configure it in the Model Selection section.")
+                gr.Warning(
+                    "Custom model path is not set. Please configure it in the Model Selection section."
+                )
                 return gr.update(), gr.update(), ref_text
 
-            ema_model = load_custom(custom_model_path, vocab_path=custom_vocab_path, model_cfg=json.loads(custom_model_config))
+            ema_model = load_custom(
+                custom_model_path,
+                vocab_path=custom_vocab_path,
+                model_cfg=json.loads(custom_model_config),
+            )
         else:
             # Default to F5-TTS for unknown model types
-            gr.Warning(f"Unknown model type: {model_type}. Defaulting to {DEFAULT_TTS_MODEL}.")
+            gr.Warning(
+                f"Unknown model type: {model_type}. Defaulting to {DEFAULT_TTS_MODEL}."
+            )
             ema_model = load_f5tts("F5-TTS_v1")
     except Exception as e:
         # Handle parsing errors or other exceptions
         gr.Warning(f"Error loading model: {str(e)}. Defaulting to {DEFAULT_TTS_MODEL}.")
         ema_model = load_f5tts("F5-TTS_v1")
 
-    vocoder = load_vocoder2()
+    vocoder = load_vocoder_local("vocoder")
 
     final_wave, final_sample_rate, combined_spectrogram = infer_process(
         ref_audio,
@@ -266,13 +344,15 @@ def generate_podcast(
 
 
 def ui_app_credits():
-    gr.Markdown("""
+    gr.Markdown(
+        """
 # Credits
 
 * [mrfakename](https://github.com/fakerybakery) for the original [online demo](https://huggingface.co/spaces/mrfakename/E2-F5-TTS)
 * [RootingInLoad](https://github.com/RootingInLoad) for initial chunk generation and podcast app exploration
 * [jpgallegoar](https://github.com/jpgallegoar) for multiple speech-type generation & voice chat
-""")
+"""
+    )
 
 
 def create_model_selection_ui():
@@ -286,32 +366,34 @@ def create_model_selection_ui():
     with gr.Accordion("Model Selection", open=False):
         with gr.Row():
             model_type = gr.Radio(
-                choices=[DEFAULT_TTS_MODEL, "E2-TTS", "Custom"],
+                choices=[DEFAULT_TTS_MODEL, "E2-TTS", "OpenF5-TTS", "Custom"],
                 label="Choose TTS Model",
                 value=default_model_data["type"],
-                info="Select the model to use"
+                info="Select the model to use",
             )
             with gr.Column(scale=1):
                 unload_btn = unload_model_button("tts_model")
 
-        with gr.Group(visible=default_model_data["type"] == "Custom") as custom_model_group:
+        with gr.Group(
+            visible=default_model_data["type"] == "Custom"
+        ) as custom_model_group:
             gr.Markdown("### Custom Model Configuration")
             custom_model_path_input = gr.Textbox(
                 label="Model Path",
                 value=default_model_data["custom"]["model_path"],
                 placeholder="Path to model checkpoint (local path or Hugging Face path starting with hf://)",
-                info="Example: hf://username/model-name/model.safetensors or C:/path/to/model.safetensors"
+                info="Example: hf://username/model-name/model.safetensors or C:/path/to/model.safetensors",
             )
             custom_vocab_path_input = gr.Textbox(
                 label="Vocabulary Path (Optional)",
                 value=default_model_data["custom"]["vocab_path"],
                 placeholder="Path to vocabulary file (leave empty to use default)",
-                info="Example: hf://username/model-name/vocab.txt or C:/path/to/vocab.txt"
+                info="Example: hf://username/model-name/vocab.txt or C:/path/to/vocab.txt",
             )
             custom_model_config_input = gr.Textbox(
                 label="Model Configuration (JSON)",
                 value=default_model_data["custom"]["model_config"],
-                info="JSON configuration for the model architecture"
+                info="JSON configuration for the model architecture",
             )
 
         # Show/hide custom model configuration based on selection
@@ -321,11 +403,13 @@ def create_model_selection_ui():
         model_type.change(
             update_custom_model_visibility,
             inputs=[model_type],
-            outputs=[custom_model_group]
+            outputs=[custom_model_group],
         )
 
         # Update model choice JSON when any input changes
-        def update_model_choice_json(model_type, path, vocab_path, config, current_json):
+        def update_model_choice_json(
+            model_type, path, vocab_path, config, current_json
+        ):
             # Parse the current JSON
             model_data = json.loads(current_json)
 
@@ -344,26 +428,50 @@ def create_model_selection_ui():
         # Connect all input changes to update the JSON
         model_type.change(
             update_model_choice_json,
-            inputs=[model_type, custom_model_path_input, custom_vocab_path_input, custom_model_config_input, model_choice_json],
-            outputs=[model_choice_json]
+            inputs=[
+                model_type,
+                custom_model_path_input,
+                custom_vocab_path_input,
+                custom_model_config_input,
+                model_choice_json,
+            ],
+            outputs=[model_choice_json],
         )
 
         custom_model_path_input.change(
             update_model_choice_json,
-            inputs=[model_type, custom_model_path_input, custom_vocab_path_input, custom_model_config_input, model_choice_json],
-            outputs=[model_choice_json]
+            inputs=[
+                model_type,
+                custom_model_path_input,
+                custom_vocab_path_input,
+                custom_model_config_input,
+                model_choice_json,
+            ],
+            outputs=[model_choice_json],
         )
 
         custom_vocab_path_input.change(
             update_model_choice_json,
-            inputs=[model_type, custom_model_path_input, custom_vocab_path_input, custom_model_config_input, model_choice_json],
-            outputs=[model_choice_json]
+            inputs=[
+                model_type,
+                custom_model_path_input,
+                custom_vocab_path_input,
+                custom_model_config_input,
+                model_choice_json,
+            ],
+            outputs=[model_choice_json],
         )
 
         custom_model_config_input.change(
             update_model_choice_json,
-            inputs=[model_type, custom_model_path_input, custom_vocab_path_input, custom_model_config_input, model_choice_json],
-            outputs=[model_choice_json]
+            inputs=[
+                model_type,
+                custom_model_path_input,
+                custom_vocab_path_input,
+                custom_model_config_input,
+                model_choice_json,
+            ],
+            outputs=[model_choice_json],
         )
 
     return model_choice_json
@@ -371,66 +479,97 @@ def create_model_selection_ui():
 
 def ui_app_tts():
     gr.Markdown("# Batched TTS")
-    ref_audio_input = gr.Audio(label="Reference Audio", type="filepath")
-    gen_text_input = gr.Textbox(label="Text to Generate", lines=10)
+    with gr.Row():
+        with gr.Column():
+            gen_text_input = gr.Textbox(label="Text to Generate", lines=10)
+            ref_audio_input = gr.Audio(label="Reference Audio", type="filepath")
 
-    # Add model selection component
-    model_choice = create_model_selection_ui()
+            # Add model selection component
+            model_choice = create_model_selection_ui()
 
-    generate_btn = gr.Button("Synthesize", variant="primary")
-    with gr.Accordion("Advanced Settings", open=False):
-        ref_text_input = gr.Textbox(
-            label="Reference Text",
-            info="Leave blank to automatically transcribe the reference audio. If you enter text it will override automatic transcription.",
-            lines=2,
-        )
-        remove_silence = gr.Checkbox(
-            label="Remove Silences",
-            info="The model tends to produce silences, especially on longer audio. We can manually remove silences if needed. Note that this is an experimental feature and may produce strange results. This will also increase generation time.",
-            value=False,
-        )
-        speed_slider = gr.Slider(
-            label="Speed",
-            minimum=0.3,
-            maximum=2.0,
-            value=1.0,
-            step=0.1,
-            info="Adjust the speed of the audio.",
-        )
-        nfe_slider = gr.Slider(
-            label="NFE Steps",
-            minimum=4,
-            maximum=64,
-            value=32,
-            step=2,
-            info="Set the number of denoising steps.",
-        )
-        cross_fade_duration_slider = gr.Slider(
-            label="Cross-Fade Duration (s)",
-            minimum=0.0,
-            maximum=1.0,
-            value=0.15,
-            step=0.01,
-            info="Set the duration of the cross-fade between audio clips.",
-        )
+            with gr.Accordion("Advanced Settings", open=False):
+                ref_text_input = gr.Textbox(
+                    label="Reference Text",
+                    info="Leave blank to automatically transcribe the reference audio. If you enter text it will override automatic transcription.",
+                    lines=2,
+                )
+                remove_silence = gr.Checkbox(
+                    label="Remove Silences",
+                    info="The model tends to produce silences, especially on longer audio. We can manually remove silences if needed. Note that this is an experimental feature and may produce strange results. This will also increase generation time.",
+                    value=False,
+                )
+                speed_slider = gr.Slider(
+                    label="Speed",
+                    minimum=0.3,
+                    maximum=2.0,
+                    value=1.0,
+                    step=0.1,
+                    info="Adjust the speed of the audio.",
+                )
+                nfe_slider = gr.Slider(
+                    label="NFE Steps",
+                    minimum=4,
+                    maximum=64,
+                    value=32,
+                    step=2,
+                    info="Set the number of denoising steps.",
+                )
+                cross_fade_duration_slider = gr.Slider(
+                    label="Cross-Fade Duration (s)",
+                    minimum=0.0,
+                    maximum=1.0,
+                    value=0.15,
+                    step=0.01,
+                    info="Set the duration of the cross-fade between audio clips.",
+                )
 
-    audio_output = gr.Audio(label="Synthesized Audio")
-    spectrogram_output = gr.Image(label="Spectrogram")
+        with gr.Column():
+            audio_output = gr.Audio(label="Synthesized Audio")
+            generate_btn = gr.Button("Synthesize", variant="primary")
+            spectrogram_output = gr.Image(label="Spectrogram")
+            seed, randomize_seed_callback = randomize_seed_ui()
 
     generate_btn.click(
-        infer,
-        inputs=[
-            ref_audio_input,
-            ref_text_input,
-            gen_text_input,
-            model_choice,  # Use the local model choice
-            remove_silence,
-            cross_fade_duration_slider,
-            nfe_slider,
-            speed_slider,
-        ],
-        outputs=[audio_output, spectrogram_output, ref_text_input],
+        **randomize_seed_callback,
+    ).then(
+        **dictionarize(
+            infer_decorated,
+            inputs={
+                ref_audio_input: "ref_audio_orig",
+                ref_text_input: "ref_text",
+                gen_text_input: "text",
+                model_choice: "model",
+                remove_silence: "remove_silence",
+                cross_fade_duration_slider: "cross_fade_duration",
+                nfe_slider: "nfe_steps",
+                speed_slider: "speed",
+                seed: "seed",
+            },
+            outputs={
+                "audio_out": audio_output,
+                "spectrogram_output": spectrogram_output,
+                "ref_text_input": ref_text_input,
+                "metadata": gr.JSON(visible=False),
+                "folder_root": gr.Textbox(visible=False),
+            },
+        ),
+
     )
+
+    # generate_btn.click(
+    #     infer,
+    #     inputs=[
+    #         ref_audio_input,
+    #         ref_text_input,
+    #         gen_text_input,
+    #         model_choice,  # Use the local model choice
+    #         remove_silence,
+    #         cross_fade_duration_slider,
+    #         nfe_slider,
+    #         speed_slider,
+    #     ],
+    #     outputs=[audio_output, spectrogram_output, ref_text_input],
+    # )
 
 
 def parse_speechtypes_text(gen_text):
@@ -459,35 +598,37 @@ def parse_speechtypes_text(gen_text):
 
 
 def ui_app_podcast():
-    with gr.Blocks() as app_podcast:
-        gr.Markdown("# Podcast Generation")
-        speaker1_name = gr.Textbox(label="Speaker 1 Name")
-        ref_audio_input1 = gr.Audio(
-            label="Reference Audio (Speaker 1)", type="filepath"
-        )
-        ref_text_input1 = gr.Textbox(label="Reference Text (Speaker 1)", lines=2)
+    gr.Markdown("# Podcast Generation")
+    with gr.Row():
+        with gr.Column():
+            script_input = gr.Textbox(
+                label="Podcast Script",
+                lines=10,
+                placeholder="Enter the script with speaker names at the start of each block, e.g.:\nSean: How did you start studying...\n\nMeghan: I came to my interest in technology...\nIt was a long journey...\n\nSean: That's fascinating. Can you elaborate...",
+            )
 
-        speaker2_name = gr.Textbox(label="Speaker 2 Name")
-        ref_audio_input2 = gr.Audio(
-            label="Reference Audio (Speaker 2)", type="filepath"
-        )
-        ref_text_input2 = gr.Textbox(label="Reference Text (Speaker 2)", lines=2)
+            ref_audio_input1 = gr.Audio(
+                label="Reference Audio (Speaker 1)", type="filepath"
+            )
+            speaker1_name = gr.Textbox(label="Speaker 1 Name")
+            ref_text_input1 = gr.Textbox(label="Reference Text (Speaker 1)", lines=2)
 
-        script_input = gr.Textbox(
-            label="Podcast Script",
-            lines=10,
-            placeholder="Enter the script with speaker names at the start of each block, e.g.:\nSean: How did you start studying...\n\nMeghan: I came to my interest in technology...\nIt was a long journey...\n\nSean: That's fascinating. Can you elaborate...",
-        )
+            ref_audio_input2 = gr.Audio(
+                label="Reference Audio (Speaker 2)", type="filepath"
+            )
+            speaker2_name = gr.Textbox(label="Speaker 2 Name")
+            ref_text_input2 = gr.Textbox(label="Reference Text (Speaker 2)", lines=2)
 
-        # Add model selection component
-        podcast_model_choice = create_model_selection_ui()
+            # Add model selection component
+            podcast_model_choice = create_model_selection_ui()
+            podcast_remove_silence = gr.Checkbox(
+                label="Remove Silences",
+                value=True,
+            )
 
-        podcast_remove_silence = gr.Checkbox(
-            label="Remove Silences",
-            value=True,
-        )
-        generate_podcast_btn = gr.Button("Generate Podcast", variant="primary")
-        podcast_output = gr.Audio(label="Generated Podcast")
+        with gr.Column():
+            podcast_output = gr.Audio(label="Generated Podcast")
+            generate_podcast_btn = gr.Button("Generate Podcast", variant="primary")
 
         def podcast_generation(
             script,
@@ -528,8 +669,10 @@ def ui_app_podcast():
             outputs=podcast_output,
         )
 
+
 # Keep track of autoincrement of speech types, no roll back
 speech_type_count = 1
+
 
 def ui_app_emotional():
     # New section for multistyle generation
@@ -615,7 +758,9 @@ def ui_app_emotional():
             row_updates[speech_type_count] = gr.update(visible=True)
             speech_type_count += 1
         else:
-            gr.Warning("Exhausted maximum number of speech types. Consider restart the app.")
+            gr.Warning(
+                "Exhausted maximum number of speech types. Consider restart the app."
+            )
         return row_updates
 
     add_speech_type_btn.click(add_speech_type_fn, outputs=speech_type_rows)
@@ -628,7 +773,12 @@ def ui_app_emotional():
     for i in range(1, len(speech_type_delete_btns)):
         speech_type_delete_btns[i].click(
             delete_speech_type_fn,
-            outputs=[speech_type_rows[i], speech_type_names[i], speech_type_audios[i], speech_type_ref_texts[i]],
+            outputs=[
+                speech_type_rows[i],
+                speech_type_names[i],
+                speech_type_audios[i],
+                speech_type_ref_texts[i],
+            ],
         )
 
     # Text input for the prompt
@@ -665,7 +815,9 @@ def ui_app_emotional():
         )
 
     # Generate button
-    generate_multistyle_btn = gr.Button("Generate Multi-Style Speech", variant="primary")
+    generate_multistyle_btn = gr.Button(
+        "Generate Multi-Style Speech", variant="primary"
+    )
 
     # Output audio
     audio_output_multistyle = gr.Audio(label="Synthesized Audio")
@@ -686,7 +838,10 @@ def ui_app_emotional():
             speech_type_names_list, speech_type_audios_list, speech_type_ref_texts_list
         ):
             if name_input and audio_input:
-                speech_types[name_input] = {"audio": audio_input, "ref_text": ref_text_input}
+                speech_types[name_input] = {
+                    "audio": audio_input,
+                    "ref_text": ref_text_input,
+                }
             else:
                 speech_types[f"@{ref_text_idx}@"] = {"audio": "", "ref_text": ""}
             ref_text_idx += 1
@@ -705,19 +860,31 @@ def ui_app_emotional():
             if style in speech_types:
                 current_style = style
             else:
-                gr.Warning(f"Type {style} is not available, will use Regular as default.")
+                gr.Warning(
+                    f"Type {style} is not available, will use Regular as default."
+                )
                 current_style = "Regular"
 
             try:
                 ref_audio = speech_types[current_style]["audio"]
             except KeyError:
                 gr.Warning(f"Please provide reference audio for type {current_style}.")
-                return [None] + [speech_types[style]["ref_text"] for style in speech_types]
+                return [None] + [
+                    speech_types[style]["ref_text"] for style in speech_types
+                ]
             ref_text = speech_types[current_style].get("ref_text", "")
 
             # Generate speech for this segment
             audio_out, _, ref_text_out = infer(
-                ref_audio, ref_text, text, emotional_model_choice, remove_silence, 0, 32, 1.0, print
+                ref_audio,
+                ref_text,
+                text,
+                emotional_model_choice,
+                remove_silence,
+                0,
+                32,
+                1.0,
+                print,
             )  # show_info=print no pull to top when generating
             sr, audio_data = audio_out
 
@@ -727,7 +894,9 @@ def ui_app_emotional():
         # Concatenate all audio segments
         if generated_audio_segments:
             final_audio_data = np.concatenate(generated_audio_segments)
-            return [(sr, final_audio_data)] + [speech_types[style]["ref_text"] for style in speech_types]
+            return [(sr, final_audio_data)] + [
+                speech_types[style]["ref_text"] for style in speech_types
+            ]
         else:
             gr.Warning("No audio generated.")
             return [None] + [speech_types[style]["ref_text"] for style in speech_types]
