@@ -364,20 +364,17 @@ def create_model_selection_ui():
     model_choice_json = gr.State(DEFAULT_MODEL_CHOICE_JSON)
 
     with gr.Accordion("Model Selection", open=False):
-        with gr.Row():
+        with gr.Column():
             model_type = gr.Radio(
                 choices=[DEFAULT_TTS_MODEL, "E2-TTS", "OpenF5-TTS", "Custom"],
                 label="Choose TTS Model",
                 value=default_model_data["type"],
                 info="Select the model to use",
             )
-            with gr.Column(scale=1):
-                unload_btn = unload_model_button("tts_model")
 
-        with gr.Group(
-            visible=default_model_data["type"] == "Custom"
-        ) as custom_model_group:
-            gr.Markdown("### Custom Model Configuration")
+            unload_model_button("f5_tts_model")
+
+        with gr.Accordion("Custom Model Configuration"):
             custom_model_path_input = gr.Textbox(
                 label="Model Path",
                 value=default_model_data["custom"]["model_path"],
@@ -395,16 +392,6 @@ def create_model_selection_ui():
                 value=default_model_data["custom"]["model_config"],
                 info="JSON configuration for the model architecture",
             )
-
-        # Show/hide custom model configuration based on selection
-        def update_custom_model_visibility(model_type):
-            return gr.update(visible=model_type == "Custom")
-
-        model_type.change(
-            update_custom_model_visibility,
-            inputs=[model_type],
-            outputs=[custom_model_group],
-        )
 
         # Update model choice JSON when any input changes
         def update_model_choice_json(
