@@ -3,12 +3,12 @@ import re
 import os
 
 setuptools.setup(
-    name="extension_f5_tts",
+    name="tts_webui_extension.f5_tts",
     packages=setuptools.find_namespace_packages(),
     version="1.3.0",
     author="rsxdalv",
     description="F5-TTS: A Fairytaler that Fakes Fluent and Faithful Speech with Flow Matching.",
-    url="https://github.com/rsxdalv/extension_f5_tts",
+    url="https://github.com/rsxdalv/tts_webui_extension.f5_tts",
     project_urls={},
     scripts=[],
     install_requires=[
@@ -21,3 +21,4 @@ setuptools.setup(
         "Operating System :: OS Independent",
     ],
 )
+
